@@ -1,7 +1,5 @@
 # Introduction 
 
-## Features
-
 ## Architecture Diagram
 
 ## Demo / lab
@@ -88,7 +86,7 @@
   --account-name stpoppy01 \
   --auth-mode login
   ```
-  Note: 
+  Notes: 
   - The storage account job is to store Terraform state files (it's a shared infrastructure that can hold the state of all your project). If the storage account is defined inside the `main.tf`, it would only be created by `terraform apply`, which can't run before `terraform init`.
   - The `--allow-blob-public-access false` means nobody can read files anonymously. This is important because the state file contains secrets (e.g. passwords, cluster certificates).
   - The *container* is a folder inside the storage account, and the name "tfstate" says what's in it which is the Terraform state file. 
@@ -150,5 +148,50 @@ Point the frontend and backend to the public images from piyushsachdeva on Docke
     - name: postgres
       newTag: "15"
   ```
+
+### Step 2: Update Terraform Configuration Files
+
+Note: for now, only the `dev/` environment will be updated. `test/` and `prod/` will be added later and will also need to be adjusted.
+
+#### 2.1 Copy the variable files into `dev/`:
+
+```bash
+cp source-temp/lessons/day28/dev/variables.tf     aks-gitops-argocd-terraform/dev/
+cp source-temp/lessons/day28/dev/terraform.tfvars aks-gitops-argocd-terraform/dev/
+```
+
+#### 2.2 Update both `terraform.tfvars` and the defaults in `variables.tf` with these changes:
+
+```hcl
+location                = "westeurope"
+resource_group_name     = "rg-aks-gitops-argocd-dev-westeu"
+kubernetes_cluster_name = "aks-gitops-argocd-cluster"
+vm_size                 = "Standard_D2s_v4"
+kubernetes_version      = "1.35.7"
+
+gitops_repo_url = "https://github.com/emlykf/aks-gitops-argocd-terraform.git"
+app_repo_url    = "https://github.com/emlykf/aks-gitops-argocd-terraform.git"
+app_repo_path   = "kubernetes/3tire-configs"
+
+postgres_password = ""
+```
+Notes:
+- Only `dev/` is configured for now. The `test/` and `prod/` environments are incomplete (no Key Vault / External Secrets), so they will be created later.
+- The project resource group must be **different** from the state resource group (`rg-tfstate-westeu`). Otherwise `terraform destroy` would also delete the storage account holding the state files.
+- `postgres_password = ""` makes Terraform generate a random password and store it in Key Vault, so no password is written in the code.
+- `node_count` probably will not be used, because the node pool uses autoscaling (min 1, max 5) set in `main.tf`.
+
+### Step 3: Validate GitOps Repository Access
+
+Check that the manifests are publicly accessible, so Argo CD can read them:
+
+```bash
+curl -s https://raw.githubusercontent.com/emlykf/aks-gitops-argocd-terraform/main/kubernetes/3tire-configs/namespace.yaml
+```
+
+This should return the content of `namespace.yaml`. If you get a `404`, check that:
+- the repository name and path are correct
+- the repository is public
+- the files were pushed to the `main` branch
 
 ## Challenges & How I Resolved Them
