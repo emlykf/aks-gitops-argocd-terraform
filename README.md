@@ -1,5 +1,7 @@
 # Introduction 
 
+## Features
+
 ## Architecture Diagram
 
 ## Demo / lab
@@ -194,4 +196,109 @@ This should return the content of `namespace.yaml`. If you get a `404`, check th
 - the repository is public
 - the files were pushed to the `main` branch
 
+### Step 4: Initialize Terraform
+
+Run Terraform from the `dev/` folder (where all the `.tf` files are):
+
+```bash
+cd dev
+terraform init
+```
+
+This downloads the providers and connects to the remote state backend (`stpoppy01`). It should end with *"Terraform has been successfully initialized!"*.
+
+### Step 5: Add the Remaining Terraform Files
+
+#### 5.1 Copy the files into `dev/`:
+
+```bash
+cp source-temp/lessons/day28/dev/main.tf                  aks-gitops-argocd-terraform/dev/
+cp source-temp/lessons/day28/dev/kubernetes-resources.tf  aks-gitops-argocd-terraform/dev/
+cp source-temp/lessons/day28/dev/external-secrets.tf      aks-gitops-argocd-terraform/dev/
+cp source-temp/lessons/day28/dev/outputs.tf               aks-gitops-argocd-terraform/dev/
+cp -r source-temp/lessons/day28/dev/manifests             aks-gitops-argocd-terraform/dev/
+cp -r source-temp/lessons/day28/dev/scripts               aks-gitops-argocd-terraform/dev/
+```
+
+Check the configuration:
+
+```bash
+terraform validate
+```
+
+#### 5.2 Update `main.tf`
+
+- Resource group name: use the variable as it is, so the environment isn't added twice (`...-dev-westeu-dev`):
+  ```hcl
+  resource "azurerm_resource_group" "main" {
+    name     = var.resource_group_name
+    location = var.location
+    tags     = local.common_tags
+  }
+  ```
+- AKS cluster: add the `node_provisioning_profile` block (required since azurerm v5):
+  ```hcl
+  node_provisioning_profile {
+    mode = "Manual"
+  }
+  ```
+- Key Vault: add `rbac_authorization_enabled` (required since azurerm v5):
+  ```hcl
+  rbac_authorization_enabled = false
+  ```
+
+Note:
+- `mode = "Manual"` means the node pools are defined in the code (`default_node_pool` with autoscaling), the same behaviour as the original code on azurerm v4.
+- `rbac_authorization_enabled = false` keeps using the `access_policy` blocks for Key Vault access.
+
 ## Challenges & How I Resolved Them
+
+### 1. Upgrading the original code to azurerm v5 (Step 5.2)
+
+The original code was written for azurerm **4.27**, but this project uses **v5**. Running `terraform validate` failed with:
+
+```
+Error: Insufficient node_provisioning_profile blocks
+```
+
+According to the [5.0 upgrade guide](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/guides/5.0-upgrade-guide), two settings are now required. So the fix was adding them to `main.tf`:
+
+```hcl
+# AKS: "Manual" means the node pools are defined in the code, while "Auto" lets AKS pick VM sizes and create pools by itself. 
+node_provisioning_profile {
+  mode = "Manual"
+}
+
+# Key Vault: It decides whether access to the Key Vault is controlled by access policies (false) or by Azure RBAC role assignments (true).
+rbac_authorization_enabled = false
+```
+
+### 2. Helm and Kubernetes provider 3.x syntax changes 
+
+- The original code uses Helm provider **2.x** and Kubernetes provider **2.x**, but my project uses **3.x** for both. Running `terraform validate` showed errors:
+
+  ```
+  Error: Unsupported block type
+  Blocks of type "set" are not expected here.
+  ```
+
+  In Helm provider 3.x, the separate `set { }` blocks must be written as one list. So the fix was changing them in `resource "helm_release" "argocd"`: 
+
+  ```hcl
+  # Helm 2.x: one block per value
+  set {
+    name  = "server.service.type"
+    value = "LoadBalancer"
+  }
+
+  # Helm 3.x: all values in one list
+  set = [
+    {
+      name  = "server.service.type"
+      value = "LoadBalancer"
+    },
+    ...
+  ]
+  ```
+
+- Terraform also warned that `kubernetes_namespace` is deprecated in Kubernetes provider 3.x, so we need to rename it to `kubernetes_namespace_v1` in all three places where it's used.

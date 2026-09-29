@@ -4,6 +4,6 @@ terraform {
     resource_group_name  = "rg-tfstate-westeu"
     storage_account_name = "stpoppy01"                
     container_name       = "tfstate"
-    key                  = "aks-gitops-dev.tfstate"   # you don't create this file yourself, Terraform creates it automatically the first time it writes state
+    key                  = "aks-gitops-argocd-dev.tfstate"   # you don't create this file yourself, Terraform creates it automatically the first time it writes state
   }
 }
