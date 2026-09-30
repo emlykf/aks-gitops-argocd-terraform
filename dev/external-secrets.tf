@@ -21,6 +21,7 @@ resource "null_resource" "external_secrets_operator" {
   }
 
   provisioner "local-exec" {
+    interpreter = ["bash", "-c"]   # I'm using Windows: Terraform would run this with cmd.exe, which can't run .sh scripts, so I use bash (Git Bash) instead
     command = <<-EOT
       ${path.module}/scripts/install-external-secrets.sh \
         "${azurerm_resource_group.main.name}" \

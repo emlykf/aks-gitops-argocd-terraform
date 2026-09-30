@@ -73,11 +73,11 @@ resource "azurerm_kubernetes_cluster" "main" {
 
   # Conditional SSH key configuration
   dynamic "linux_profile" {
-    for_each = fileexists("~/.ssh/id_rsa_azure.pub") ? [1] : []
+    for_each = fileexists("~/.ssh/id_rsa.pub") ? [1] : []
     content {
       admin_username = "azureuser"
       ssh_key {
-        key_data = file("~/.ssh/id_rsa_azure.pub")
+        key_data = file("~/.ssh/id_rsa.pub")
       }
     }
   }

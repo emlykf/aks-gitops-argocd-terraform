@@ -72,6 +72,7 @@ resource "null_resource" "goal_tracker_app" {
   }
 
   provisioner "local-exec" {
+    interpreter = ["bash", "-c"]   # I'm using Windows: Terraform would run this with cmd.exe, which can't run .sh scripts, so I use bash (Git Bash) instead 
     working_dir = path.module
     command     = "./scripts/deploy-argocd-app.sh"
 
