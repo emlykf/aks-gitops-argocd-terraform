@@ -10,7 +10,7 @@ spec:
   source:
     repoURL: https://github.com/emlykf/aks-gitops-argocd-terraform.git
     targetRevision: HEAD
-    path: kubernetes/3tire-configs
+    path: kubernetes/3tire-configs/overlays/dev
   destination:
     server: https://kubernetes.default.svc
     namespace: 3tirewebapp-dev

@@ -273,6 +273,39 @@ node_provisioning_profile {
 rbac_authorization_enabled = false
 ```
 
+#### 5.3 Windows users only: run the scripts with bash
+
+On Windows, Terraform runs `local-exec` commands with `cmd.exe`, which can't run `.sh` scripts. Add `interpreter` to the `local-exec` blocks that call a script, in `kubernetes-resources.tf` (`goal_tracker_app`) and `external-secrets.tf` (`external_secrets_operator`):
+
+```hcl
+provisioner "local-exec" {
+  interpreter = ["bash", "-c"]
+  ...
+}
+```
+
+Also check that `envsubst` is available. `deploy-argocd-app.sh` uses it to fill in your repo URL and path in the Argo CD Application manifest, and without it the Argo CD app isn't created:
+
+```bash
+which envsubst   # should print a path, e.g. /usr/bin/envsubst
+```
+
+#### 5.4 Use your own SSH key
+
+`main.tf` only adds an SSH key to the AKS nodes if the file exists. Point it to your key (it must be an RSA key):
+
+```hcl
+for_each = fileexists("~/.ssh/id_rsa.pub") ? [1] : []
+...
+key_data = file("~/.ssh/id_rsa.pub")
+```
+
+Check that your key is RSA:
+
+```bash
+head -c 20 ~/.ssh/id_rsa.pub   # should start with "ssh-rsa"
+```
+
 ### 2. Helm and Kubernetes provider 3.x syntax changes 
 
 - The original code uses Helm provider **2.x** and Kubernetes provider **2.x**, but my project uses **3.x** for both. Running `terraform validate` showed errors:
