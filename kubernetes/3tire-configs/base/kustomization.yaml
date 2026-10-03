@@ -6,7 +6,6 @@ resources:
   - postgres-complete.yaml
   - backend-complete.yaml
   - frontend-complete.yaml
-  - external-secrets-placeholder.yaml
 
 commonAnnotations:
   app.kubernetes.io/version: "1.0"
