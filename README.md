@@ -1,259 +1,28 @@
-# Introduction 
+# Introduction
+
+This project is an end-to-end deployment of a 3-tier web app on Azure Kubernetes Service (AKS). The infrastructure is built with Terraform, Argo CD is installed with Helm and deploys the app via GitOps, and the database secrets come from Azure Key Vault.
+
+It's based on a project by [Piyush Sachdeva](https://github.com/piyushsachdeva), which I rebuilt as my own upgraded version.
 
 ## Features
 
+- **Infrastructure:** Azure Kubernetes Service (AKS) with cluster autoscaling (1–5 nodes)
+- **GitOps:** Argo CD (installed with Helm) for continuous deployment and self-healing
+- **Secrets:** Azure Key Vault + External Secrets Operator, with an auto-generated password
+- **Environments:** dev, test and prod with Kustomize overlays
+- **State Management:** Terraform remote state in an Azure Storage Account
+- **Access:** custom subdomain per environment
+- **Networking:** Azure CNI with Azure network policies
+
 ## Architecture Diagram
 
-## Demo / lab
+![Infrastructure](infrastructure-diagram.png)
 
-### Prerequisites
-
-- Tools:
-  
-  On Windows, kubectl and helm can be installed with `winget`: 
-
-  ```bash
-  winget install -e --id Kubernetes.kubectl --source winget
-  winget install -e --id Helm.Helm --source winget
-  ```
-
-- For Windows user, this repo includes a `.gitattributes` file:
-
-  It makes sure the `.sh` scripts keep Linux line endings (LF) on Windows. Otherwise Git may convert them to Windows line endings (CRLF), and bash fails with errors like `$'\r': command not found`.
-
-  ```bash
-  echo "*.sh text eol=lf" > .gitattributes
-  ```
-
-- Login to Azure & set the Subscription that you want to use for this session:
-
-  ```bash
-  az login
-  # or
-  az login --use-device-code
-  ```
-  ```bash
-  az account set --subscription "<SUBSCRIPTION-ID>"
-  ```
-
-  Check the current subscription that was set:
-
-  ```bash
-  az account show --query "{Name:name, SubscriptionId:id, Tenant:tenantId}" --output table
-  ```
-
-- Register the Resource Providers (required for azurerm v5)
-
-  Check the status first:
-
-  ```bash
-  az provider list --query "[?namespace=='Microsoft.ContainerService' || namespace=='Microsoft.KeyVault' || namespace=='Microsoft.ManagedIdentity'].{Provider:namespace, State:registrationState}" --output table
-  ```
-
-  Run these commands to register them:
-
-  ```bash
-  az provider register --namespace Microsoft.ManagedIdentity
-  az provider register --namespace Microsoft.ContainerService
-  az provider register --namespace Microsoft.KeyVault
-  ```
-
-- Remote State Backend: 
-
-  These resources have to exist before you do `terraform init`, because Terraform can't store its state in something it hasn't created yet.
-
-  Check whether a name is still free before creating it:
-
-  ```bash
-  az storage account check-name --name <your_storage_account_name> --query nameAvailable
-  ```
-
-  If you don't have a resource group, storage account or container for state yet, you can create one like this:
-
-  ```bash
-  az group create --name rg-tfstate-westeu --location westeurope
-  ```
-  ```bash
-  az storage account create \
-  --name stpoppy01 \
-  --resource-group rg-tfstate-westeu \
-  --location westeurope \
-  --sku Standard_LRS \
-  --min-tls-version TLS1_2 \
-  --allow-blob-public-access false
-  ```
-  ```bash
-  az storage container create \
-  --name tfstate \
-  --account-name stpoppy01 \
-  --auth-mode login
-  ```
-  Notes: 
-  - The storage account job is to store Terraform state files (it's a shared infrastructure that can hold the state of all your project). If the storage account is defined inside the `main.tf`, it would only be created by `terraform apply`, which can't run before `terraform init`.
-  - The `--allow-blob-public-access false` means nobody can read files anonymously. This is important because the state file contains secrets (e.g. passwords, cluster certificates).
-  - The *container* is a folder inside the storage account, and the name "tfstate" says what's in it which is the Terraform state file. 
-  - The `--auth-mode login` uses your Entra ID login (az login) to create the container, but it requires the **Storage Blob Data Contributor** role on the storage account (Owner alone is not enough). Without it, remove `--auth-mode login` to use the account key instead.
-
-  To check what are resources you just created:
-  
-  ```bash
-  az resource list --resource-group rg-tfstate-westeu --output table
-  ```
-  ```bash
-  az storage container-rm list --storage-account stpoppy01 --output table
-  ```
-
----
-
-### Step 1: Add the Application Manifests (GitOps)
-
-The Kubernetes manifests of the 3-tier web app (frontend, backend, PostgreSQL) live in `kubernetes/3tire-configs/`. Argo CD watches this folder and keeps the cluster in sync with it.
-
-#### 1.1 Copy the Manifest files from the source repo below:
-
-```bash
-git clone https://github.com/piyushsachdeva/Terraform-Full-Course-Azure.git source-temp
-mkdir -p aks-gitops-argocd-terraform/kubernetes
-cp -r source-temp/lessons/day28/manifest-files/3tire-configs aks-gitops-argocd-terraform/kubernetes/
-```
-
-#### 1.2 Update the Argo CD Application
-
-In `argocd-application.yaml`, point it to your own repo like this:
-
-```yaml
-source:
-  repoURL: https://github.com/emlykf/aks-gitops-argocd-terraform.git
-  targetRevision: HEAD
-  path: kubernetes/3tire-configs
-```
-
-#### 1.3 Update the container images name
-
-Point the frontend and backend to the public images from piyushsachdeva on Docker Hub:
-
-- frontend-complete.yaml:
-  ```yaml
-  image: piyushsachdeva/frontend
-  ```
-- backend-complete.yaml:
-  ```yaml
-  image: piyushsachdeva/backend
-  ```
-- kustomization.yaml:
-  ```yaml
-  images:
-    - name: piyushsachdeva/frontend
-      newTag: v2
-    - name: piyushsachdeva/backend
-      newTag: latest
-    - name: postgres
-      newTag: "15"
-  ```
-
-### Step 2: Update Terraform Configuration Files
-
-Note: for now, only the `dev/` environment will be updated. `test/` and `prod/` will be added later and will also need to be adjusted.
-
-#### 2.1 Copy the variable files into `dev/`:
-
-```bash
-cp source-temp/lessons/day28/dev/variables.tf     aks-gitops-argocd-terraform/dev/
-cp source-temp/lessons/day28/dev/terraform.tfvars aks-gitops-argocd-terraform/dev/
-```
-
-#### 2.2 Update both `terraform.tfvars` and the defaults in `variables.tf` with these changes:
-
-```hcl
-location                = "westeurope"
-resource_group_name     = "rg-aks-gitops-argocd-dev-westeu"
-kubernetes_cluster_name = "aks-gitops-argocd-cluster"
-vm_size                 = "Standard_D2s_v4"
-kubernetes_version      = "1.35.7"
-
-gitops_repo_url = "https://github.com/emlykf/aks-gitops-argocd-terraform.git"
-app_repo_url    = "https://github.com/emlykf/aks-gitops-argocd-terraform.git"
-app_repo_path   = "kubernetes/3tire-configs"
-
-postgres_password = ""
-```
-Notes:
-- Only `dev/` is configured for now. The `test/` and `prod/` environments are incomplete (no Key Vault / External Secrets), so they will be created later.
-- The project resource group must be **different** from the state resource group (`rg-tfstate-westeu`). Otherwise `terraform destroy` would also delete the storage account holding the state files.
-- `postgres_password = ""` makes Terraform generate a random password and store it in Key Vault, so no password is written in the code.
-- `node_count` probably will not be used, because the node pool uses autoscaling (min 1, max 5) set in `main.tf`.
-
-### Step 3: Validate GitOps Repository Access
-
-Check that the manifests are publicly accessible, so Argo CD can read them:
-
-```bash
-curl -s https://raw.githubusercontent.com/emlykf/aks-gitops-argocd-terraform/main/kubernetes/3tire-configs/namespace.yaml
-```
-
-This should return the content of `namespace.yaml`. If you get a `404`, check that:
-- the repository name and path are correct
-- the repository is public
-- the files were pushed to the `main` branch
-
-### Step 4: Initialize Terraform
-
-Run Terraform from the `dev/` folder (where all the `.tf` files are):
-
-```bash
-cd dev
-terraform init
-```
-
-This downloads the providers and connects to the remote state backend (`stpoppy01`). It should end with *"Terraform has been successfully initialized!"*.
-
-### Step 5: Add the Remaining Terraform Files
-
-#### 5.1 Copy the files into `dev/`:
-
-```bash
-cp source-temp/lessons/day28/dev/main.tf                  aks-gitops-argocd-terraform/dev/
-cp source-temp/lessons/day28/dev/kubernetes-resources.tf  aks-gitops-argocd-terraform/dev/
-cp source-temp/lessons/day28/dev/external-secrets.tf      aks-gitops-argocd-terraform/dev/
-cp source-temp/lessons/day28/dev/outputs.tf               aks-gitops-argocd-terraform/dev/
-cp -r source-temp/lessons/day28/dev/manifests             aks-gitops-argocd-terraform/dev/
-cp -r source-temp/lessons/day28/dev/scripts               aks-gitops-argocd-terraform/dev/
-```
-
-Check the configuration:
-
-```bash
-terraform validate
-```
-
-#### 5.2 Update `main.tf`
-
-- Resource group name: use the variable as it is, so the environment isn't added twice (`...-dev-westeu-dev`):
-  ```hcl
-  resource "azurerm_resource_group" "main" {
-    name     = var.resource_group_name
-    location = var.location
-    tags     = local.common_tags
-  }
-  ```
-- AKS cluster: add the `node_provisioning_profile` block (required since azurerm v5):
-  ```hcl
-  node_provisioning_profile {
-    mode = "Manual"
-  }
-  ```
-- Key Vault: add `rbac_authorization_enabled` (required since azurerm v5):
-  ```hcl
-  rbac_authorization_enabled = false
-  ```
-
-Note:
-- `mode = "Manual"` means the node pools are defined in the code (`default_node_pool` with autoscaling), the same behaviour as the original code on azurerm v4.
-- `rbac_authorization_enabled = false` keeps using the `access_policy` blocks for Key Vault access.
+![Application](application-diagram.png)
 
 ## Challenges & How I Resolved Them
 
-### 1. Upgrading the original code to azurerm v5 (Step 5.2)
+### 1. Upgrading the original code to azurerm v5 (Step 4.1)
 
 The original code was written for azurerm **4.27**, but this project uses **v5**. Running `terraform validate` failed with:
 
@@ -261,10 +30,10 @@ The original code was written for azurerm **4.27**, but this project uses **v5**
 Error: Insufficient node_provisioning_profile blocks
 ```
 
-According to the [5.0 upgrade guide](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/guides/5.0-upgrade-guide), two settings are now required. So the fix was adding them to `main.tf`:
+According to the [5.0 upgrade guide](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/guides/5.0-upgrade-guide), two settings are now required. So the fix was adding them to `main.tf` ([Demo Step 4.1](Demo.md#41-maintf)):
 
 ```hcl
-# AKS: "Manual" means the node pools are defined in the code, while "Auto" lets AKS pick VM sizes and create pools by itself. 
+# AKS: "Manual" means the node pools are defined in the code, while "Auto" lets AKS pick VM sizes and create pools by itself.
 node_provisioning_profile {
   mode = "Manual"
 }
@@ -273,40 +42,7 @@ node_provisioning_profile {
 rbac_authorization_enabled = false
 ```
 
-#### 5.3 Windows users only: run the scripts with bash
-
-On Windows, Terraform runs `local-exec` commands with `cmd.exe`, which can't run `.sh` scripts. Add `interpreter` to the `local-exec` blocks that call a script, in `kubernetes-resources.tf` (`goal_tracker_app`) and `external-secrets.tf` (`external_secrets_operator`):
-
-```hcl
-provisioner "local-exec" {
-  interpreter = ["bash", "-c"]
-  ...
-}
-```
-
-Also check that `envsubst` is available. `deploy-argocd-app.sh` uses it to fill in your repo URL and path in the Argo CD Application manifest, and without it the Argo CD app isn't created:
-
-```bash
-which envsubst   # should print a path, e.g. /usr/bin/envsubst
-```
-
-#### 5.4 Use your own SSH key
-
-`main.tf` only adds an SSH key to the AKS nodes if the file exists. Point it to your key (it must be an RSA key):
-
-```hcl
-for_each = fileexists("~/.ssh/id_rsa.pub") ? [1] : []
-...
-key_data = file("~/.ssh/id_rsa.pub")
-```
-
-Check that your key is RSA:
-
-```bash
-head -c 20 ~/.ssh/id_rsa.pub   # should start with "ssh-rsa"
-```
-
-### 2. Helm and Kubernetes provider 3.x syntax changes 
+### 2. Helm and Kubernetes provider 3.x syntax changes (Step 4.2)
 
 - The original code uses Helm provider **2.x** and Kubernetes provider **2.x**, but my project uses **3.x** for both. Running `terraform validate` showed errors:
 
@@ -315,7 +51,7 @@ head -c 20 ~/.ssh/id_rsa.pub   # should start with "ssh-rsa"
   Blocks of type "set" are not expected here.
   ```
 
-  In Helm provider 3.x, the separate `set { }` blocks must be written as one list. So the fix was changing them in `resource "helm_release" "argocd"`: 
+  In Helm provider 3.x, the separate `set { }` blocks must be written as one list. So the fix was changing them in `resource "helm_release" "argocd"` ([Demo Step 4.2](Demo.md#42-kubernetes-resourcestf)):
 
   ```hcl
   # Helm 2.x: one block per value
@@ -335,3 +71,9 @@ head -c 20 ~/.ssh/id_rsa.pub   # should start with "ssh-rsa"
   ```
 
 - Terraform also warned that `kubernetes_namespace` is deprecated in Kubernetes provider 3.x, so we need to rename it to `kubernetes_namespace_v1` in all three places where it's used.
+
+### 3. Making the test and prod environments work (Step 2)
+
+The original `test/` and `prod/` environments used the same manifests folder as dev, and that folder hardcodes the namespace `3tirewebapp-dev`. But the External Secrets script creates the database secret in `3tirewebapp-<environment>`. So in test and prod, the app would have been deployed into `3tirewebapp-dev` while its secret landed in `3tirewebapp-test` / `-prod`, and the backend and PostgreSQL couldn't find their credentials.
+
+So the fix was splitting the manifests into a shared `base/` and one Kustomize overlay per environment, each with its own namespace, replicas and image tags, and pointing each environment's `app_repo_path` to its own overlay ([Demo Step 2](Demo.md#step-2-set-up-the-application-manifests-kustomize-base--overlays)).
