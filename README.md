@@ -2,7 +2,7 @@
 
 This project is an end-to-end deployment of a 3-tier web app on Azure Kubernetes Service (AKS). The infrastructure is built with Terraform, Argo CD is installed with Helm and deploys the app via GitOps, and the database secrets come from Azure Key Vault.
 
-It's based on a project by [Piyush Sachdeva](https://github.com/piyushsachdeva), which I rebuilt as my own upgraded version.
+It's based on a project by [Piyush Sachdeva](https://github.com/piyushsachdeva), upgraded and improved by me.
 
 ## Features
 
